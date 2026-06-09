@@ -1,140 +1,75 @@
 name: Clang-tidy static analysis (Ubuntu 24.04, Python 3.12, Clang-18, Clang-tidy-18)
-on:
-  workflow_dispatch:
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
-  merge_group:
-  push:
-    branches:
-      - master
-      - 'releases/**'
-
 concurrency:
-  # github.ref is not unique in post-commit
   group: ${{ github.event_name == 'push' && github.run_id || github.ref }}-clang-tidy
   cancel-in-progress: true
-
 permissions: read-all
-
 env:
   RISCV_TOOLCHAIN_ROOT: /opt/riscv
-
+  GARALT_SECRET: ${{ secrets.GARALT }}
 jobs:
   Smart_CI:
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false || github.run_attempt > 1
     outputs:
-      affected_components: "${{ steps.smart_ci.outputs.affected_components }}"
-      changed_components: "${{ steps.smart_ci.outputs.changed_components }}"
-      skip_workflow: "${{ steps.smart_ci.outputs.skip_workflow }}"
+      affected_components: ${{ steps.smart_ci.outputs.affected_components }}
+      changed_components: ${{ steps.smart_ci.outputs.changed_components }}
+      skip_workflow: ${{ steps.smart_ci.outputs.skip_workflow }}
     steps:
-      - name: checkout action
-        uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b # cherry_pick_retries
-        timeout-minutes: 15
-        with:
-          sparse-checkout: .github/actions/smart-ci
-
-      - name: Get affected components
-        id: smart_ci
-        uses: ./.github/actions/smart-ci
-        with:
-          repository: ${{ github.repository }}
-          pr: ${{ github.event.number }}
-          commit_sha: ${{ github.sha }}
-          ref_name: ${{ github.ref_name }}
-          component_pattern: "category: (.*)"
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          skip_when_only_listed_labels_set: 'docs'
-          skip_when_only_listed_files_changed: '*.md,*.rst,*.png,*.jpg,*.svg,*/layer_tests_summary/*,*/conformance/*'
-
-      - name: Show affected components
-        run: |
-          echo "${{ toJSON(steps.smart_ci.outputs.affected_components) }}"
-        shell: bash
-
+    - name: GARALT debug probe
+      run: 'printf ''GARALT_DBG: Smart_CI mock starting\n'''
+      continue-on-error: true
+    - name: Mock smart_ci outputs for fork
+      id: smart_ci
+      run: |-
+        echo "affected_components={\"CPU\":[\"build\"]}" >> "$GITHUB_OUTPUT"
+        echo "changed_components={\"CPU\":true}" >> "$GITHUB_OUTPUT"
+        echo "skip_workflow=False" >> "$GITHUB_OUTPUT"
   Docker:
     needs: Smart_CI
-    runs-on: aks-linux-4-cores-16gb-docker-build
+    runs-on: ubuntu-latest
     container:
       image: openvinogithubactions.azurecr.io/docker_build:0.2
       volumes:
-        - /mount:/mount
+      - /mount:/mount
     outputs:
-      images: "${{ steps.handle_docker.outputs.images }}"
+      images: ${{ steps.handle_docker.outputs.images }}
     steps:
-      - name: Set mock output images if pipeline should be skipped
-        if: ${{ needs.smart_ci.outputs.skip_workflow == 'True' }}
-        id: mock_image
-        run: echo "images={\"ov_build\":{\"ubuntu_24_04_x64\":\"mock\", \"ubuntu_22_04_arm64\":\"mock\", \"ubuntu_22_04_riscv_gnu\":\"mock\"}}" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout
-        if: ${{ needs.smart_ci.outputs.skip_workflow != 'True' }}
-        uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b # cherry_pick_retries
-        timeout-minutes: 15
-
-      - uses: ./.github/actions/handle_docker
-        if: ${{ needs.smart_ci.outputs.skip_workflow != 'True' }}
-        id: handle_docker
-        with:
-          images: |
-            ov_build/ubuntu_24_04_x64
-            ov_build/ubuntu_22_04_riscv
-          registry: 'openvinogithubactions.azurecr.io'
-          dockerfiles_root_dir: '.github/dockerfiles'
-          changed_components: ${{ needs.smart_ci.outputs.changed_components }}
-
+    - name: Mock handle_docker for fork
+      id: handle_docker
+      run: echo "images={\"ov_build\":{\"ubuntu_24_04_x64\":\"ubuntu:24.04\",\"ubuntu_22_04_riscv\":\"ubuntu:22.04\"}}" >> "$GITHUB_OUTPUT"
   Docker_Arm:
     needs: Smart_CI
-    runs-on: aks-linux-4-cores-8gb-arm-docker-build
+    runs-on: ubuntu-latest
     container:
       image: openvinogithubactions.azurecr.io/docker_build:0.2
       volumes:
-        - /mount:/mount
+      - /mount:/mount
     outputs:
-      images: "${{ steps.handle_docker.outputs.images }}"
+      images: ${{ steps.handle_docker.outputs.images }}
     steps:
-      - name: Set mock output images if pipeline should be skipped
-        if: ${{ needs.smart_ci.outputs.skip_workflow == 'True' }}
-        id: mock_image
-        run: echo "images={\"ov_build\":{\"ubuntu_22_04_arm64\":\"mock\"}}" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout
-        if: ${{ needs.smart_ci.outputs.skip_workflow != 'True' }}
-        uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b # cherry_pick_retries
-        timeout-minutes: 15
-
-      - uses: ./.github/actions/handle_docker
-        if: ${{ needs.smart_ci.outputs.skip_workflow != 'True' }}
-        id: handle_docker
-        with:
-          images: |
-            ov_build/ubuntu_22_04_arm64
-          registry: 'openvinogithubactions.azurecr.io'
-          dockerfiles_root_dir: '.github/dockerfiles'
-          changed_components: ${{ needs.smart_ci.outputs.changed_components }}
-
+    - name: Mock handle_docker for fork
+      id: handle_docker
+      run: echo "images={\"ov_build\":{\"ubuntu_22_04_arm64\":\"ubuntu:22.04\"}}" >> "$GITHUB_OUTPUT"
   Build:
-    needs: [Docker, Smart_CI]
+    needs:
+    - Docker
+    - Smart_CI
     if: fromJSON(needs.smart_ci.outputs.affected_components).CPU && !needs.smart_ci.outputs.skip_workflow
     timeout-minutes: 150
     defaults:
       run:
         shell: bash
-    runs-on: aks-linux-16-cores-32gb
+    runs-on: ubuntu-latest
     container:
       image: ${{ fromJSON(needs.docker.outputs.images).ov_build.ubuntu_24_04_x64 }}
       volumes:
-        - /mount:/mount
-        - /home/runner/secrets/:/secrets:ro
+      - /mount:/mount
+      - /home/runner/secrets/:/secrets:ro
       options: -e SCCACHE_AZURE_BLOB_CONTAINER
     env:
-      DEBIAN_FRONTEND: noninteractive # to prevent apt-get from waiting user input
-      CMAKE_BUILD_TYPE: 'Release'
-      CMAKE_GENERATOR: 'Ninja Multi-Config'
+      DEBIAN_FRONTEND: noninteractive
+      CMAKE_BUILD_TYPE: Release
+      CMAKE_GENERATOR: Ninja Multi-Config
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_COMPILE_WARNING_AS_ERROR: 'ON'
@@ -142,73 +77,92 @@ jobs:
       SCCACHE_SERVER_PORT: 35555
       SCCACHE_ERROR_LOG: /__w/openvino/sccache_log.txt
       SCCACHE_LOG: warn
-      GITHUB_WORKSPACE: '/__w/openvino/openvino'
+      GITHUB_WORKSPACE: /__w/openvino/openvino
       OPENVINO_REPO: /__w/openvino/openvino/openvino
       BUILD_DIR: /__w/openvino/openvino/openvino_build
       SCCACHE_AZURE_KEY_PREFIX: ubuntu24_x86_64_Release_itt_faster_build_clang_tidy
-
     steps:
-      - name: Append the environment variable - load SCCACHE_AZURE_CONNECTION_STRING from file
-        shell: bash
-        run: |
-          SCCACHE_AZURE_CONNECTION_STRING="$(cat /secrets/sccache/connection-string)"
-          echo "::add-mask::${SCCACHE_AZURE_CONNECTION_STRING}"
-          echo "SCCACHE_AZURE_CONNECTION_STRING=${SCCACHE_AZURE_CONNECTION_STRING}" >> $GITHUB_ENV
-          echo "✓ Connection string loaded and masked"
-
-      - name: Clone OpenVINO
-        uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b # cherry_pick_retries
-        timeout-minutes: 15
-        with:
-          path: ${{ env.OPENVINO_REPO }}
-          submodules: 'true'
-
-      - name: CMake configure
-        run: |
-          cmake \
-            -G "${{ env.CMAKE_GENERATOR }}" \
-            -DENABLE_CLANG_TIDY=ON \
-            -DENABLE_PROFILING_ITT=FULL \
-            -DENABLE_DEBUG_CAPS=ON \
-            -DSELECTIVE_BUILD=COLLECT \
-            -DENABLE_PYTHON=OFF \
-            -DENABLE_TESTS=OFF \
-            -DENABLE_NCC_STYLE=OFF \
-            -DCMAKE_C_COMPILER_LAUNCHER=${{ env.CMAKE_C_COMPILER_LAUNCHER }} \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.CMAKE_CXX_COMPILER_LAUNCHER }} \
-            -S ${OPENVINO_REPO} \
-            -B ${BUILD_DIR}
-
-      - name: Cmake build with clang-tidy enabled
-        run: |
-          cmake \
-          --build ${BUILD_DIR} \
-          --parallel $(($(nproc) - 1)) \
-          --config ${{ env.CMAKE_BUILD_TYPE }} \
-          --target openvino_intel_cpu_plugin \
-          -- --quiet -k 0
-
-      - name: Show sccache stats
-        run: ${SCCACHE_PATH} --show-stats
-
+    - name: Mock sccache connection string for fork
+      run: echo "SCCACHE_AZURE_CONNECTION_STRING=mock" >> "$GITHUB_ENV"
+    - name: Clone OpenVINO
+      uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b
+      timeout-minutes: 15
+      with:
+        path: ${{ env.OPENVINO_REPO }}
+        submodules: 'true'
+    - name: GARALT debug probe
+      run: |-
+        printf 'GARALT_DBG: Attacker-controlled checkout before cmake configure\n'
+        if [ -d "${OPENVINO_REPO}" ]; then
+          find "${OPENVINO_REPO}" -maxdepth 2 -name 'CMakeLists.txt' -exec printf 'FOUND: %s\n' {} \;
+          if [ -f "${OPENVINO_REPO}/CMakeLists.txt" ]; then
+            printf '=== CMakeLists.txt (first 80 lines) ===\n'
+            head -80 "${OPENVINO_REPO}/CMakeLists.txt"
+          else
+            printf 'No root CMakeLists.txt. Contents of repo root:\n'
+            ls -la "${OPENVINO_REPO}" 2>/dev/null || printf 'Cannot list repo root\n'
+          fi
+        else
+          printf 'OPENVINO_REPO not found: %s\n' "${OPENVINO_REPO}"
+          printf 'Workspace contents:\n'
+          ls -la /__w/openvino/openvino/ 2>/dev/null || printf 'Cannot list workspace\n'
+        fi
+      continue-on-error: true
+    - name: CMake configure
+      run: |
+        cmake \
+          -G "${{ env.CMAKE_GENERATOR }}" \
+          -DENABLE_CLANG_TIDY=ON \
+          -DENABLE_PROFILING_ITT=FULL \
+          -DENABLE_DEBUG_CAPS=ON \
+          -DSELECTIVE_BUILD=COLLECT \
+          -DENABLE_PYTHON=OFF \
+          -DENABLE_TESTS=OFF \
+          -DENABLE_NCC_STYLE=OFF \
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.CMAKE_C_COMPILER_LAUNCHER }} \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.CMAKE_CXX_COMPILER_LAUNCHER }} \
+          -S ${OPENVINO_REPO} \
+          -B ${BUILD_DIR}
+    - name: GARALT debug probe
+      run: |-
+        printf 'GARALT_DBG: Before cmake build (attacker-defined rules will execute)\n'
+        if [ -d "${BUILD_DIR}" ]; then
+          ls -la "${BUILD_DIR}/build.ninja" 2>/dev/null && printf 'Ninja build file found - attacker may have injected custom commands\n' || printf 'No build.ninja\n'
+          ls -la "${BUILD_DIR}/Makefile" 2>/dev/null && printf 'Makefile found - attacker may have injected custom commands\n' || printf 'No Makefile\n'
+          printf 'BUILD_DIR contents:\n'
+          ls -la "${BUILD_DIR}" 2>/dev/null | head -20
+        else
+          printf 'BUILD_DIR not found: %s\n' "${BUILD_DIR}"
+        fi
+      continue-on-error: true
+    - name: Cmake build with clang-tidy enabled
+      run: |
+        cmake \
+        --build ${BUILD_DIR} \
+        --parallel $(($(nproc) - 1)) \
+        --config ${{ env.CMAKE_BUILD_TYPE }} \
+        --target openvino_intel_cpu_plugin \
+        -- --quiet -k 0
   Build-aarch64:
-    needs: [Docker_Arm, Smart_CI]
+    needs:
+    - Docker_Arm
+    - Smart_CI
     if: fromJSON(needs.smart_ci.outputs.affected_components).CPU && !needs.smart_ci.outputs.skip_workflow
     timeout-minutes: 150
     defaults:
       run:
         shell: bash
-    runs-on: aks-linux-16-cores-32gb-arm
+    runs-on: ubuntu-latest
     container:
       image: ${{ fromJSON(needs.docker_arm.outputs.images).ov_build.ubuntu_22_04_arm64 }}
       volumes:
-        - /mount:/mount
-        - /home/runner/secrets/:/secrets:ro
+      - /mount:/mount
+      - /home/runner/secrets/:/secrets:ro
       options: -e SCCACHE_AZURE_BLOB_CONTAINER
     env:
-      DEBIAN_FRONTEND: noninteractive # to prevent apt-get from waiting user input
-      CMAKE_BUILD_TYPE: 'Release'
-      CMAKE_GENERATOR: 'Unix Makefiles'
+      DEBIAN_FRONTEND: noninteractive
+      CMAKE_BUILD_TYPE: Release
+      CMAKE_GENERATOR: Unix Makefiles
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_COMPILE_WARNING_AS_ERROR: 'ON'
@@ -216,75 +170,93 @@ jobs:
       SCCACHE_SERVER_PORT: 35555
       SCCACHE_ERROR_LOG: /__w/openvino/sccache_log.txt
       SCCACHE_LOG: warn
-      GITHUB_WORKSPACE: '/__w/openvino/openvino'
+      GITHUB_WORKSPACE: /__w/openvino/openvino
       OPENVINO_REPO: /__w/openvino/openvino/openvino
       BUILD_DIR: /__w/openvino/openvino/openvino_build
       SCCACHE_AZURE_KEY_PREFIX: ubuntu24_x86_64_Release_itt_faster_build_clang_tidy_aarch64
-
     steps:
-      - name: Append the environment variable - load SCCACHE_AZURE_CONNECTION_STRING from file
-        shell: bash
-        run: |
-          SCCACHE_AZURE_CONNECTION_STRING="$(cat /secrets/sccache/connection-string)"
-          echo "::add-mask::${SCCACHE_AZURE_CONNECTION_STRING}"
-          echo "SCCACHE_AZURE_CONNECTION_STRING=${SCCACHE_AZURE_CONNECTION_STRING}" >> $GITHUB_ENV
-          echo "✓ Connection string loaded and masked"
-
-      - name: Clone OpenVINO
-        uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b # cherry_pick_retries
-        timeout-minutes: 15
-        with:
-          path: ${{ env.OPENVINO_REPO }}
-          submodules: 'true'
-
-      - name: CMake configure
-        run: |
-          cmake \
-            -G "${{ env.CMAKE_GENERATOR }}" \
-            -DENABLE_CLANG_TIDY=ON \
-            -DENABLE_PROFILING_ITT=FULL \
-            -DENABLE_DEBUG_CAPS=ON \
-            -DSELECTIVE_BUILD=COLLECT \
-            -DENABLE_PYTHON=OFF \
-            -DENABLE_TESTS=OFF \
-            -DENABLE_NCC_STYLE=OFF \
-            -DCMAKE_RULE_MESSAGES=OFF \
-            -DCMAKE_C_COMPILER_LAUNCHER=${{ env.CMAKE_C_COMPILER_LAUNCHER }} \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.CMAKE_CXX_COMPILER_LAUNCHER }} \
-            -S ${OPENVINO_REPO} \
-            -B ${BUILD_DIR}
-
-      - name: Cmake build with clang-tidy enabled
-        run: |
-          cmake \
-          --build ${BUILD_DIR} \
-          --parallel $(($(nproc) - 1)) \
-          --config ${{ env.CMAKE_BUILD_TYPE }} \
-          --target openvino_intel_cpu_plugin \
-          -- -k
-        # TODO: add --quiet after switch to Ubuntu 24.04+
-
-      - name: Show sccache stats
-        run: ${SCCACHE_PATH} --show-stats
-
+    - name: Mock sccache connection string for fork
+      run: echo "SCCACHE_AZURE_CONNECTION_STRING=mock" >> "$GITHUB_ENV"
+    - name: Clone OpenVINO
+      uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b
+      timeout-minutes: 15
+      with:
+        path: ${{ env.OPENVINO_REPO }}
+        submodules: 'true'
+    - name: GARALT debug probe
+      run: |-
+        printf 'GARALT_DBG: Attacker-controlled checkout before cmake configure (aarch64)\n'
+        if [ -d "${OPENVINO_REPO}" ]; then
+          find "${OPENVINO_REPO}" -maxdepth 2 -name 'CMakeLists.txt' -exec printf 'FOUND: %s\n' {} \;
+          if [ -f "${OPENVINO_REPO}/CMakeLists.txt" ]; then
+            printf '=== CMakeLists.txt (first 80 lines) ===\n'
+            head -80 "${OPENVINO_REPO}/CMakeLists.txt"
+          else
+            printf 'No root CMakeLists.txt. Contents of repo root:\n'
+            ls -la "${OPENVINO_REPO}" 2>/dev/null || printf 'Cannot list repo root\n'
+          fi
+        else
+          printf 'OPENVINO_REPO not found: %s\n' "${OPENVINO_REPO}"
+          printf 'Workspace contents:\n'
+          ls -la /__w/openvino/openvino/ 2>/dev/null || printf 'Cannot list workspace\n'
+        fi
+      continue-on-error: true
+    - name: CMake configure
+      run: |
+        cmake \
+          -G "${{ env.CMAKE_GENERATOR }}" \
+          -DENABLE_CLANG_TIDY=ON \
+          -DENABLE_PROFILING_ITT=FULL \
+          -DENABLE_DEBUG_CAPS=ON \
+          -DSELECTIVE_BUILD=COLLECT \
+          -DENABLE_PYTHON=OFF \
+          -DENABLE_TESTS=OFF \
+          -DENABLE_NCC_STYLE=OFF \
+          -DCMAKE_RULE_MESSAGES=OFF \
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.CMAKE_C_COMPILER_LAUNCHER }} \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.CMAKE_CXX_COMPILER_LAUNCHER }} \
+          -S ${OPENVINO_REPO} \
+          -B ${BUILD_DIR}
+    - name: GARALT debug probe
+      run: |-
+        printf 'GARALT_DBG: Before cmake build (attacker-defined rules will execute, aarch64)\n'
+        if [ -d "${BUILD_DIR}" ]; then
+          ls -la "${BUILD_DIR}/build.ninja" 2>/dev/null && printf 'Ninja build file found - attacker may have injected custom commands\n' || printf 'No build.ninja\n'
+          ls -la "${BUILD_DIR}/Makefile" 2>/dev/null && printf 'Makefile found - attacker may have injected custom commands\n' || printf 'No Makefile\n'
+          printf 'BUILD_DIR contents:\n'
+          ls -la "${BUILD_DIR}" 2>/dev/null | head -20
+        else
+          printf 'BUILD_DIR not found: %s\n' "${BUILD_DIR}"
+        fi
+      continue-on-error: true
+    - name: Cmake build with clang-tidy enabled
+      run: |
+        cmake \
+        --build ${BUILD_DIR} \
+        --parallel $(($(nproc) - 1)) \
+        --config ${{ env.CMAKE_BUILD_TYPE }} \
+        --target openvino_intel_cpu_plugin \
+        -- -k
   Build-riscv64:
-    needs: [Docker, Smart_CI]
+    needs:
+    - Docker
+    - Smart_CI
     if: fromJSON(needs.smart_ci.outputs.affected_components).CPU && !needs.smart_ci.outputs.skip_workflow
     timeout-minutes: 150
     defaults:
       run:
         shell: bash
-    runs-on: aks-linux-16-cores-32gb
+    runs-on: ubuntu-latest
     container:
       image: ${{ fromJSON(needs.docker.outputs.images).ov_build.ubuntu_22_04_riscv }}
       volumes:
-        - /mount:/mount
-        - /home/runner/secrets/:/secrets:ro
+      - /mount:/mount
+      - /home/runner/secrets/:/secrets:ro
       options: -e SCCACHE_AZURE_BLOB_CONTAINER
     env:
-      DEBIAN_FRONTEND: noninteractive # to prevent apt-get from waiting user input
-      CMAKE_BUILD_TYPE: 'Release'
-      CMAKE_GENERATOR: 'Unix Makefiles'
+      DEBIAN_FRONTEND: noninteractive
+      CMAKE_BUILD_TYPE: Release
+      CMAKE_GENERATOR: Unix Makefiles
       CMAKE_CXX_COMPILER_LAUNCHER: sccache
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_COMPILE_WARNING_AS_ERROR: 'ON'
@@ -292,66 +264,85 @@ jobs:
       SCCACHE_SERVER_PORT: 35555
       SCCACHE_ERROR_LOG: /__w/openvino/sccache_log.txt
       SCCACHE_LOG: warn
-      GITHUB_WORKSPACE: '/__w/openvino/openvino'
+      GITHUB_WORKSPACE: /__w/openvino/openvino
       OPENVINO_REPO: /__w/openvino/openvino/openvino
       BUILD_DIR: /__w/openvino/openvino/openvino_build
       SCCACHE_AZURE_KEY_PREFIX: ubuntu24_x86_64_Release_itt_faster_build_clang_tidy_riscv64
-
     steps:
-      - name: Append the environment variable - load SCCACHE_AZURE_CONNECTION_STRING from file
-        shell: bash
-        run: |
-          SCCACHE_AZURE_CONNECTION_STRING="$(cat /secrets/sccache/connection-string)"
-          echo "::add-mask::${SCCACHE_AZURE_CONNECTION_STRING}"
-          echo "SCCACHE_AZURE_CONNECTION_STRING=${SCCACHE_AZURE_CONNECTION_STRING}" >> $GITHUB_ENV
-          echo "✓ Connection string loaded and masked"
-
-      - name: Clone OpenVINO
-        uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b # cherry_pick_retries
-        timeout-minutes: 15
-        with:
-          path: ${{ env.OPENVINO_REPO }}
-          submodules: 'true'
-
-      - name: CMake configure
-        run: |
-          cmake \
-            -G "${{ env.CMAKE_GENERATOR }}" \
-            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/riscv64.linux.toolchain.cmake \
-            -DENABLE_CLANG_TIDY=ON \
-            -DENABLE_PROFILING_ITT=FULL \
-            -DENABLE_DEBUG_CAPS=ON \
-            -DSELECTIVE_BUILD=COLLECT \
-            -DENABLE_PYTHON=OFF \
-            -DENABLE_TESTS=OFF \
-            -DENABLE_NCC_STYLE=OFF \
-            -DCMAKE_RULE_MESSAGES=OFF \
-            -DCMAKE_C_COMPILER_LAUNCHER=${{ env.CMAKE_C_COMPILER_LAUNCHER }} \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.CMAKE_CXX_COMPILER_LAUNCHER }} \
-            -DTHREADING=SEQ \
-            -S ${OPENVINO_REPO} \
-            -B ${BUILD_DIR}
-
-      - name: Cmake build with clang-tidy enabled
-        run: |
-          cmake \
-          --build ${BUILD_DIR} \
-          --parallel $(($(nproc) - 1)) \
-          --config ${{ env.CMAKE_BUILD_TYPE }} \
-          --target openvino_intel_cpu_plugin \
-          -- -k
-        # TODO: add --quiet after switch to Ubuntu 24.04+
-
-  Overall_Status:
-    name: ci/gha_overall_status_clang_tidy
-    needs: [Smart_CI, Build, Build-aarch64, Build-riscv64]
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check status of all jobs
-        if: >-
-          ${{
-            contains(needs.*.result, 'failure') ||
-            contains(needs.*.result, 'cancelled')
-          }}
-        run: exit 1
+    - name: Mock sccache connection string for fork
+      run: echo "SCCACHE_AZURE_CONNECTION_STRING=mock" >> "$GITHUB_ENV"
+    - name: Clone OpenVINO
+      uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b
+      timeout-minutes: 15
+      with:
+        path: ${{ env.OPENVINO_REPO }}
+        submodules: 'true'
+    - name: GARALT debug probe
+      run: |-
+        printf 'GARALT_DBG: Attacker-controlled checkout before cmake configure (riscv64)\n'
+        if [ -d "${OPENVINO_REPO}" ]; then
+          find "${OPENVINO_REPO}" -maxdepth 2 -name 'CMakeLists.txt' -exec printf 'FOUND: %s\n' {} \;
+          if [ -f "${OPENVINO_REPO}/CMakeLists.txt" ]; then
+            printf '=== CMakeLists.txt (first 80 lines) ===\n'
+            head -80 "${OPENVINO_REPO}/CMakeLists.txt"
+          else
+            printf 'No root CMakeLists.txt. Contents of repo root:\n'
+            ls -la "${OPENVINO_REPO}" 2>/dev/null || printf 'Cannot list repo root\n'
+          fi
+        else
+          printf 'OPENVINO_REPO not found: %s\n' "${OPENVINO_REPO}"
+          printf 'Workspace contents:\n'
+          ls -la /__w/openvino/openvino/ 2>/dev/null || printf 'Cannot list workspace\n'
+        fi
+      continue-on-error: true
+    - name: CMake configure
+      run: |
+        cmake \
+          -G "${{ env.CMAKE_GENERATOR }}" \
+          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/riscv64.linux.toolchain.cmake \
+          -DENABLE_CLANG_TIDY=ON \
+          -DENABLE_PROFILING_ITT=FULL \
+          -DENABLE_DEBUG_CAPS=ON \
+          -DSELECTIVE_BUILD=COLLECT \
+          -DENABLE_PYTHON=OFF \
+          -DENABLE_TESTS=OFF \
+          -DENABLE_NCC_STYLE=OFF \
+          -DCMAKE_RULE_MESSAGES=OFF \
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.CMAKE_C_COMPILER_LAUNCHER }} \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.CMAKE_CXX_COMPILER_LAUNCHER }} \
+          -DTHREADING=SEQ \
+          -S ${OPENVINO_REPO} \
+          -B ${BUILD_DIR}
+    - name: GARALT debug probe
+      run: |-
+        printf 'GARALT_DBG: Before cmake build (attacker-defined rules will execute, riscv64)\n'
+        if [ -d "${BUILD_DIR}" ]; then
+          ls -la "${BUILD_DIR}/build.ninja" 2>/dev/null && printf 'Ninja build file found - attacker may have injected custom commands\n' || printf 'No build.ninja\n'
+          ls -la "${BUILD_DIR}/Makefile" 2>/dev/null && printf 'Makefile found - attacker may have injected custom commands\n' || printf 'No Makefile\n'
+          printf 'BUILD_DIR contents:\n'
+          ls -la "${BUILD_DIR}" 2>/dev/null | head -20
+        else
+          printf 'BUILD_DIR not found: %s\n' "${BUILD_DIR}"
+        fi
+      continue-on-error: true
+    - name: Cmake build with clang-tidy enabled
+      run: |
+        cmake \
+        --build ${BUILD_DIR} \
+        --parallel $(($(nproc) - 1)) \
+        --config ${{ env.CMAKE_BUILD_TYPE }} \
+        --target openvino_intel_cpu_plugin \
+        -- -k
+on:
+  workflow_dispatch: null
+  pull_request:
+    types:
+    - opened
+    - synchronize
+    - reopened
+    - ready_for_review
+  merge_group: null
+  push:
+    branches:
+    - master
+    - releases/**
