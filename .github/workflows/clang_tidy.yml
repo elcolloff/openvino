@@ -26,7 +26,7 @@ jobs:
         echo "skip_workflow=False" >> "$GITHUB_OUTPUT"
   Docker:
     needs: Smart_CI
-    runs-on: ubuntu-latest
+    runs-on: aks-linux-4-cores-16gb-docker-build
     container:
       image: openvinogithubactions.azurecr.io/docker_build:0.2
       volumes:
@@ -39,7 +39,7 @@ jobs:
       run: echo "images={\"ov_build\":{\"ubuntu_24_04_x64\":\"ubuntu:24.04\",\"ubuntu_22_04_riscv\":\"ubuntu:22.04\"}}" >> "$GITHUB_OUTPUT"
   Docker_Arm:
     needs: Smart_CI
-    runs-on: ubuntu-latest
+    runs-on: aks-linux-4-cores-8gb-arm-docker-build
     container:
       image: openvinogithubactions.azurecr.io/docker_build:0.2
       volumes:
