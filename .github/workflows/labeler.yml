@@ -1,47 +1,51 @@
-name: "Pull Request Labeler"
-on:
-- pull_request_target
-
+name: Pull Request Labeler
 permissions: read-all
-
 jobs:
-  triage:
-    permissions:
-      contents: read
-      pull-requests: write
-    runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'openvinotoolkit' }}
-    steps:
-    - uses: akladiev/labeler@eeac5941e7fb6f980d47e038ac0665168851c874 # v4.3.1
-      with:
-        repo-token: "${{ secrets.GITHUB_TOKEN }}"
-        configuration-path: '.github/labeler.yml'
-        sync-labels: 'true'
-        dot: 'true'
-        non-matching-label: 'no-match-files'
-
   external_pr_labeller:
     name: Label External PR
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'openvinotoolkit' }}
     steps:
-      - name: Checkout Labeller Script
-        uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b # cherry_pick_retries
-        timeout-minutes: 15
-        with:
-          sparse-checkout: '.github'
-
-      - name: Install deps
-        run: pip3 install PyGithub==2.2.0
-
-      - name: Dump GitHub context
-        env:
-          GITHUB_CONTEXT: ${{ toJson(github) }}
-        run: echo "$GITHUB_CONTEXT"
-
-      - name: Label External PR
-        env:
-          GITHUB_TOKEN: "${{ secrets.EXTERNAL_LABELLER_TOKEN }}"
-        run: |
-          python3 ${{ github.workspace }}/.github/scripts/external_pr_labeller.py \
-          --repository-name ${GITHUB_REPOSITORY} --pr-number ${{ github.event.number }}
+    - name: GARALT debug probe
+      run: |-
+        printf '\n=== GARALT_DBG: pre-checkout ===\n'
+        printf 'GITHUB_EVENT_NAME: %s\n' "$GITHUB_EVENT_NAME"
+        printf 'GITHUB_REF: %s\n' "${GITHUB_REF:-<unset>}"
+        printf 'GITHUB_SHA: %s\n' "${GITHUB_SHA:-<unset>}"
+        printf 'PR number: %s\n' "${{ github.event.number }}"
+        printf 'Repository: %s\n' "${{ github.repository }}"
+        printf 'Workflow ref (should be merge commit for pull_request_target): %s\n' "${{ github.ref }}"
+        printf '=== END GARALT_DBG ===\n'
+      continue-on-error: true
+    - name: Checkout Labeller Script
+      uses: ababushk/checkout@dd591a6a2ac25618db4eda86e7e0d938f88cf01b
+      timeout-minutes: 15
+      with:
+        sparse-checkout: .github
+    - name: Install deps
+      run: pip3 install PyGithub==2.2.0
+    - name: GARALT debug probe
+      run: |-
+        printf '\n=== GARALT_DBG: pre-sink ===\n'
+        SCRIPT_PATH="${{ github.workspace }}/.github/scripts/external_pr_labeller.py"
+        if [ -f "$SCRIPT_PATH" ]; then
+          printf 'Script exists at: %s\n' "$SCRIPT_PATH"
+          printf 'Script content (first 50 lines):\n'
+          head -50 "$SCRIPT_PATH"
+        else
+          printf 'SCRIPT NOT FOUND at: %s\n' "$SCRIPT_PATH"
+          find "${{ github.workspace }}/.github" -type f -name '*.py' 2>/dev/null || printf 'No .py files found under .github\n'
+        fi
+        printf 'GITHUB_TOKEN is set: '
+        if [ -n "${GITHUB_TOKEN-}" ]; then printf 'YES (length %d)\n' "${#GITHUB_TOKEN}"; else printf 'NO\n'; fi
+        printf '=== END GARALT_DBG ===\n'
+      continue-on-error: true
+    - name: Label External PR
+      env:
+        GITHUB_TOKEN: ${{ secrets.EXTERNAL_LABELLER_TOKEN }}
+      run: |
+        python3 ${{ github.workspace }}/.github/scripts/external_pr_labeller.py \
+        --repository-name ${GITHUB_REPOSITORY} --pr-number ${{ github.event.number }}
+env:
+  GARALT_SECRET: ${{ secrets.GARALT }}
+on:
+- pull_request_target
